@@ -117,8 +117,11 @@ function debtInfo(d) {
     const principalLeft = unpaid.some(r => r.p != null) ? unpaid.reduce((s2, r) => s2 + (+r.p || 0), 0) : null;
     return { kind: "sched", ops, last, rows, total, left, paid: total - left, overdue, next, principalLeft, pct: total ? Math.min(100, (total - left) / total * 100) : 0, done: rows.length - unpaid.length };
   }
-  const paid = pays.reduce((s2, x) => s2 + uzs(x), 0), left = Math.max((+d.amount || 0) - paid, 0);
-  return { kind: "simple", ops, last, paid, left, total: +d.amount || 0, overdue: [], next: null, rows: [], pct: +d.amount ? Math.min(100, paid / +d.amount * 100) : 0 };
+  const starts = ops.filter(x => x.debt_role === "start"), m0 = dmeta(d);
+  const base = m0.start_op ? starts.find(x => x.id === m0.start_op) : starts.filter(x => Math.abs(uzs(x) - (+d.amount || 0)) < 1).sort((a, b) => (a.op_date || "").localeCompare(b.op_date || ""))[0];
+  const added = starts.filter(x => x !== base).reduce((s2, x) => s2 + uzs(x), 0), total = (+d.amount || 0) + added;
+  const paid = pays.reduce((s2, x) => s2 + uzs(x), 0), left = Math.max(total - paid, 0);
+  return { kind: "simple", ops, last, paid, left, total, added, overdue: [], next: null, rows: [], pct: total ? Math.min(100, paid / total * 100) : 0 };
 }
 // Отметить оплаченные строки графика после платежа
 function markSchedule(d, amount, date) {
@@ -634,7 +637,7 @@ function vDebts() {
       ${it.kind === "sched" ? `<div class="bar" style="margin:8px 0 4px"><i style="width:${it.pct.toFixed(1)}%"></i></div><div class="k">${it.alloc ? "вернул" : "оплачено"} ${it.alloc ? money(it.paid) + " из " + money(it.total) + " · закрыто месяцев " + it.done + " из " + it.rows.length : it.done + " из " + it.rows.length + " · " + money(it.paid) + " из " + money(it.total)}${it.principalLeft != null ? " · основной долг " + money(it.principalLeft) : ""}${it.next ? ` · <b style="color:var(--ink)">следующий ${fmtDate(it.next.d)} — ${money(+it.next.a)}</b>` : " · всё оплачено"}</div>` : ""}
       ${it.kind === "card" ? cardBlock(d, it) : ""}
       ${!iOwe(d) ? (() => { const recs = it.ops.filter(x => x.debt_role !== "start" && x.type === "in").map(x => advInfo(x.id)); return recs.length ? `<div class="flow"><div class="eyebrow" style="margin-bottom:4px">Полученные деньги: куда ушли</div>${recs.map(a => `<div class="flowrow"><span class="num"><b>${fmtDate(a.op.op_date)} · ${money(a.given, a.cur)}</b> <span class="muted">(${esc(a.acc)})</span></span><span>${a.children.map(c => `<span class="chip">${esc(childLabel(c))} ${money(a.conv(c), a.cur)}</span>`).join(" ")}${a.left > 0.5 ? `<span class="chip pocket">в кармане ${money(a.left, a.cur)}</span>` : ""}</span></div>`).join("")}<div class="muted" style="font-size:12px;margin-top:4px">Чтобы показать, куда ушли деньги: при расходе или переводе с этого счёта выберите «Из каких денег».</div></div>` : ""; })() : ""}
-      ${it.kind === "simple" ? `<div class="bar" style="margin:8px 0 4px"><i style="width:${it.pct.toFixed(1)}%"></i></div><div class="k">${+d.amount ? `всего ${money(+d.amount)} · ${iOwe(d) ? "выплачено" : "вернули"} ${money(it.paid)}` : "<span class='neg'>укажите сумму</span>"}${d.due_date ? " · до " + fmtDate(d.due_date) : ""}</div>` : ""}
+      ${it.kind === "simple" ? `<div class="bar" style="margin:8px 0 4px"><i style="width:${it.pct.toFixed(1)}%"></i></div><div class="k">${it.total ? `всего ${money(it.total)}${it.added ? ` (сначала ${money(+d.amount)}, потом ещё ${money(it.added)})` : ""} · ${iOwe(d) ? "выплачено" : "вернули"} ${money(it.paid)}` : "<span class='neg'>укажите сумму</span>"}${d.due_date ? " · до " + fmtDate(d.due_date) : ""}</div>` : ""}
       <div class="row" style="gap:6px;margin-top:8px">${d.closed ? "" : `<button class="btn small" data-act="debt-pay" data-id="${esc(d.id)}">${iOwe(d) ? "+ Платёж" : "+ Вернули"}</button>`}${it.kind === "sched" ? `<button class="btn small" data-act="sch-show" data-id="${esc(d.id)}" aria-expanded="${S.openDebt === d.id}">${S.openDebt === d.id ? "Скрыть график" : "График"}</button>` : ""}${it.ops.length ? `<a class="btn small" href="#${rt("ops")}" data-act="debt-ops" data-id="${esc(d.id)}">${it.ops.length} операций</a>` : ""}<button class="btn small" data-act="debt-edit" data-id="${esc(d.id)}" aria-label="Изменить">✎</button></div>
       ${it.kind === "sched" && S.openDebt === d.id ? schedTable(d, it) : ""}</div>`; };
   $("#app").innerHTML = `<div class="row between"><div><h1>${my ? "Долги и кредиты" : "Долги компании"}</h1><div class="muted" style="font-size:13px;margin-top:4px">${my ? "Видите только вы." : "Кредиты и рассрочки, оформленные на нужды компании. Видят владелец и партнёр."} Платёж записывается как обычная операция и сам отмечает строку графика.</div></div><button class="btn primary" data-act="debt-new">+ Долг</button></div>
@@ -774,15 +777,15 @@ function opModal(op, preset = {}) {
   const mayDel = op && (isFull() || op.created_by === S.me.id);
   const collect = () => { const g = id => { const e = $("#" + id); return e ? e.value : undefined; };
     const d = g("o-date"); if (d !== undefined) o.op_date = d; const a = g("o-amount"); if (a !== undefined) o.amount = parseNum(a) || undefined; const n = g("o-note"); if (n !== undefined) o.note = n;
-    const dl = g("o-debt"); if (dl !== undefined) { const [di, dr] = dl.split("|"); o.debt_id = di || ""; o.debt_role = dr || ""; } const av = g("o-adv"); if (av !== undefined) o.advance_id = av;
+    const dl = g("o-debt"); if (dl !== undefined) { const [di, dr] = dl.split("|"); o.debt_id = di || ""; o.debt_role = dr || ""; } const du = g("o-due"); if (du !== undefined) o._due = du; const av = g("o-adv"); if (av !== undefined) o.advance_id = av;
     const ac = g("o-acc"); if (ac) o.account = ac; const c = g("o-cat"); if (c) o.category = c; const p = g("o-proj"); if (p !== undefined) o.project_id = p; const it = g("o-item"); if (it !== undefined) o.item_id = it; const w = g("o-who"); if (w !== undefined) o.who = w; const cp = g("o-cp"); if (cp !== undefined) o.counterparty = cp; const t = g("o-to"); if (t) o.to_account = t; };
   const draw = () => {
     const pc = pcats(), cats = my && !forCo ? (type === "in" ? pc.in : pc.out) : (type === "in" ? s.in_cats : s.out_cats), acc = o.account;
     const owner = accOwnerId(acc), advs = (type === "out" || type === "transfer") && owner && (my || o.project_id || o.advance_id) ? sourcesOn(acc, o.advance_id) : [];
     if (!op && type === "out" && o.project_id && o.advance_id === undefined) { const a0 = advs.filter(a => isAdvance(a.op)).pop(); if (a0) o.advance_id = a0.op.id; }
     const dl = S.debts.filter(d => my ? true : isCoDebt(d)), dlab = d => d.party + (isCoDebt(d) && my ? " (долг компании)" : "");
-    const dOpts = type === "out" ? [...dl.filter(d => iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|pay", "Платёж: " + dlab(d) + " — осталось " + money(debtInfo(d).left)]), ...dl.filter(d => !iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|start", "Дал в долг: " + d.party])]
-      : type === "in" ? [...dl.filter(d => !iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|pay", "Мне вернули: " + d.party + " — осталось " + money(debtInfo(d).left)]), ...dl.filter(d => iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|start", "Получил кредит / взял в долг: " + dlab(d)])] : [];
+    const dOpts = type === "out" ? [...dl.filter(d => iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|pay", "Платёж: " + dlab(d) + " — осталось " + money(debtInfo(d).left)]), ...dl.filter(d => !iOwe(d) && ((!d.closed && !sched(d).length) || d.id === o.debt_id)).map(d => [d.id + "|start", "Дал ещё в долг: " + d.party + " (долг увеличится)"]), ["new|lend", "＋ Новый долг: я дал в долг"]]
+      : type === "in" ? [...dl.filter(d => !iOwe(d) && (!d.closed || d.id === o.debt_id)).map(d => [d.id + "|pay", "Мне вернули: " + d.party + " — осталось " + money(debtInfo(d).left)]), ...dl.filter(d => iOwe(d) && d.kind !== "card" && ((!d.closed && !sched(d).length) || d.id === o.debt_id)).map(d => [d.id + "|start", (d.kind === "borrow" ? "Взял ещё в долг: " + dlab(d) + " (долг увеличится)" : "Получил кредит: " + dlab(d))]), ["new|borrow", "＋ Новый долг: я взял в долг"]] : [];
     const dSel = o.debt_id ? o.debt_id + "|" + (o.debt_role || "pay") : "";
     sheet(`<div class="row between"><h2>${op ? "Операция" : my ? "Моя операция" : "Новая операция"}</h2><button class="btn small" data-act="close">Закрыть</button></div>
     <div class="seg" role="group" aria-label="Тип операции"><button type="button" class="t-out" aria-pressed="${type === "out"}" data-t="out">Расход</button><button type="button" class="t-in" aria-pressed="${type === "in"}" data-t="in">Приход</button><button type="button" class="t-tr" aria-pressed="${type === "transfer"}" data-t="transfer">${my ? "Перевод" : "Между счетами"}</button></div>
@@ -795,7 +798,8 @@ function opModal(op, preset = {}) {
         : `<label class="f">Категория<select id="o-cat">${cats.map(c => `<option${c === o.category ? " selected" : ""}>${esc(c)}</option>`).join("")}${o.category && !cats.includes(o.category) ? `<option selected>${esc(o.category)}</option>` : ""}</select></label>`}
       <label class="f" id="rate-box"${accCur(acc) === "USD" ? "" : " hidden"}>Курс, сум за 1 $<input id="o-rate" inputmode="decimal" value="${esc(o.rate ? nf.format(o.rate) : lastRate ? nf.format(lastRate) : "")}"></label>
       ${type === "transfer" ? `<label class="f">Дошло на счёт (если меньше из-за комиссии)<input id="o-amountTo" inputmode="decimal" value="${o.amount_to != null ? esc(nf.format(o.amount_to)) : ""}" placeholder="необязательно"></label>` : ""}
-      ${type !== "transfer" && dOpts.length ? `<label class="f full">Долг или кредит<select id="o-debt"><option value="">Не связано с долгом</option>${dOpts.map(([v, t]) => `<option value="${esc(v)}"${v === dSel ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></label>` : ""}
+      ${type !== "transfer" && dOpts.length ? `<label class="f full">Долг или кредит<select id="o-debt"><option value="">Не связано с долгом</option>${dOpts.map(([v, t]) => `<option value="${esc(v)}"${v === dSel ? " selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+      ${o.debt_id === "new" ? `<div class="full muted" style="font-size:12px">Долг создастся сам на эту сумму. Имя человека — в поле «${type === "in" ? "От кого" : "Кому / где"}».</div><label class="f">Вернуть до (необязательно)<input type="date" id="o-due" value="${esc(o._due || "")}"></label>` : ""}` : ""}
       ${my && type !== "transfer" ? `<label class="f full" style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input type="checkbox" id="o-forco" ${forCo ? "checked" : ""} style="width:18px;height:18px"> Это расход за компанию (по проекту)</label>` : ""}
       ${type !== "transfer" && (!my || forCo) ? `<label class="f">Проект<select id="o-proj"><option value="">Без проекта</option>${S.projects.map(p => `<option value="${esc(p.id)}"${p.id === o.project_id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : ""}
       ${type === "out" && o.project_id && itemsAt(S.projects.find(x => x.id === o.project_id)).length ? (() => { const its = itemsAt(S.projects.find(x => x.id === o.project_id)); return `<div class="f full"><span>Расход по проекту — на что</span><div class="seg ck" role="group" aria-label="Вид расхода"><button type="button" data-ck="goods" aria-pressed="${ck === "goods"}">Товар из договора</button><button type="button" data-ck="other" aria-pressed="${ck === "other"}">Прочее: такси, доставка…</button></div></div>
@@ -823,6 +827,8 @@ function opModal(op, preset = {}) {
       sw.onclick = e => { const b = e.target.closest("[data-sdel]"); if (!b) return; collect(); splits.splice(+b.dataset.sdel, 1); if (!splits.length) splits = null; draw(); }; }
     const sa = $("#o-sadd"); if (sa) sa.onclick = () => { collect(); const its2 = itemsAt(S.projects.find(x => x.id === o.project_id)); const got = splits.reduce((s2, x) => s2 + (+x.amount || 0), 0); splits.push({ item_id: (its2[splits.length] || its2[0] || {}).id, amount: Math.max(r2((o.amount || 0) - got), 0), note: "" }); draw(); };
     sinfo(); const am = $("#o-amount"); if (am && splits) am.addEventListener("input", sinfo);
+    const dsl = $("#o-debt"); if (dsl) dsl.onchange = () => { collect(); const dd = S.debts.find(x => x.id === o.debt_id); if (dd && !o.counterparty) o.counterparty = dd.party;
+      if (o.debt_id === "new") o.category = type === "out" ? (cats.includes("Перевод человеку") ? "Перевод человеку" : o.category) : (cats.includes("Перевод от человека") ? "Перевод от человека" : o.category); draw(); };
     const fc = $("#o-forco"); if (fc) fc.onchange = () => { collect(); forCo = fc.checked; if (!forCo) { o.project_id = ""; o.item_id = ""; } o.category = ""; draw(); };
     $("#o-acc").onchange = e => { collect(); o.account = e.target.value; o.advance_id = undefined; draw(); };
     $("#op-form").onsubmit = save;
@@ -849,11 +855,19 @@ function opModal(op, preset = {}) {
     try {
       const fe = $("#o-file");
       if (fe.files[0]) rec.doc_path = await uploadFile(fe.files[0], "ops");
+      if (rec.debt_id === "new") {
+        if (!rec.counterparty) throw { message: type === "out" ? "Напишите, кому дали в долг (поле «Кому / где»)." : "Напишите, у кого взяли в долг (поле «От кого»)." };
+        const opId = op ? op.id : (crypto.randomUUID ? crypto.randomUUID() : undefined); if (opId && !op) rec.id = opId;
+        const kind = rec.debt_role === "lend" ? "lend" : "borrow", amtU = cur === "USD" ? r2(amount * (rec.rate || 0)) : amount;
+        const due = ($("#o-due") || {}).value || null;
+        const r = await S.sb.from("debts").insert({ kind, party: rec.counterparty, amount: amtU, currency: "UZS", start_date: rec.op_date, due_date: due, owner_id: my ? S.me.id : null, meta: opId ? { start_op: opId } : {}, title: rec.note || null }).select().single();
+        if (r.error) throw r.error; rec.debt_id = r.data.id; rec.debt_role = "start"; S._newDebt = true; }
       const { error } = op ? await S.sb.from("ops").update(rec).eq("id", op.id) : await S.sb.from("ops").insert(rec);
       if (error) throw error;
       if (!op && rec.debt_id && rec.debt_role === "pay") { const d = S.debts.find(x => x.id === rec.debt_id);
         if (d && sched(d).length) { const { sc, n } = markSchedule(d, amount, rec.op_date); if (n) { await S.sb.from("debts").update({ schedule: sc }).eq("id", d.id); toast("Записано · в графике отмечено платежей: " + n); load(["debts"]); } } }
-      closeModal(); toast(op ? "Операция изменена" : "Операция записана"); afterWrite("ops");
+      const nd = S._newDebt; S._newDebt = false;
+      closeModal(); toast(nd ? "Записано · долг создан" : op ? "Операция изменена" : "Операция записана"); afterWrite(...(nd ? ["debts", "ops"] : ["ops"]));
     } catch (x) { btn.disabled = false; btn.textContent = "Сохранить"; err.textContent = errText(x); }
   }
   draw();

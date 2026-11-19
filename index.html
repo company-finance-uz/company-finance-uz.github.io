@@ -116,6 +116,7 @@ select.docst.st-work{background:var(--accent-soft);color:var(--accent);border-co
 .adgrid input[readonly]{background:var(--surface-2)}
 @media (max-width:560px){.itgrid{grid-template-columns:1fr 1fr 1fr}.itgrid>.eyebrow{display:none}.itgrid input[data-f=name]{grid-column:1/-1;margin-top:6px}.adgrid{grid-template-columns:1fr 1fr}.adgrid input[data-f=name]{grid-column:1/-1;margin-top:6px}.adgrid>span:not(.eyebrow){display:none}.adgrid>.eyebrow{display:none}}
 table.items tfoot td{font-weight:700;border-top:2px solid var(--line);padding-top:10px}
+.costtg{padding:0 7px;min-width:24px;line-height:20px;font-weight:700}
 .docs{display:flex;flex-direction:column}
 .doc{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
 .doc:last-child{border-bottom:0}
@@ -152,6 +153,7 @@ label.f textarea{min-height:64px;resize:vertical}
 .seg button[aria-pressed="true"].t-out{background:var(--out-soft);color:var(--out)}
 .seg button[aria-pressed="true"].t-in{background:var(--in-soft);color:var(--in)}
 .seg button[aria-pressed="true"].t-tr{background:var(--accent-soft);color:var(--accent)}
+.seg.ck button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
 .err{color:var(--out);font-size:13px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:9px;z-index:50;font-size:14px}
 .loading{padding:40px 16px;text-align:center;color:var(--muted)}
@@ -189,6 +191,6 @@ label.f textarea{min-height:64px;resize:vertical}
 <div id="modal"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="config.js?v=20261119"></script>
-<script src="app.js?v=20261119"></script>
+<script src="app.js?v=20261119b"></script>
 </body>
 </html>

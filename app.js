@@ -72,6 +72,9 @@ function itemsAt(p, upto) {
 const itemNet = x => (+x.qty || 0) * (+x.price || 0);
 const itemGross = x => itemNet(x) * (1 + (x.vat == null ? 0 : +x.vat) / 100);
 const r2 = v => Math.round(v * 100) / 100;
+// Вид расхода проекта: goods — сам товар, other — прочее (такси, доставка…)
+const costKind = (o, byId) => o.cost_type || (o.item_id && (!byId || byId[o.item_id]) ? "goods" : "other");
+let costOpen = false; try { costOpen = localStorage.getItem("cf-cost-open") === "1"; } catch (e) {}
 function contractTotal(p) {
   const its = itemsAt(p), extra = addenda(p).filter(a => !(a.changes || []).length).reduce((s, a) => s + (+a.delta || 0), 0);
   return its.length ? r2(its.reduce((s, x) => s + itemGross(x), 0)) + extra : (+p.contract_sum || 0) + extra;
@@ -94,11 +97,23 @@ function projMoney(p) {
   const invoiced = docs.filter(d => d.kind === "Счёт-фактура").reduce((s, d) => s + (+d.amount || 0), 0);
   const items = itemsAt(p), contract = contractTotal(p);
   const base = itemsBase(p).length ? r2(itemsBase(p).reduce((s, x) => s + itemGross(x), 0)) : (+p.contract_sum || 0), add = contract - base;
-  const ids = new Set(items.map(x => x.id)), outs = ops.filter(o => o.type === "out");
-  const itemRows = items.map(x => { const cost = outs.filter(o => o.item_id === x.id).reduce((s, o) => s + inCur(o, cur), 0), net = itemNet(x); return Object.assign({}, x, { net, gross: itemGross(x), cost, margin: net - cost }); });
-  const otherCost = outs.filter(o => !o.item_id || !ids.has(o.item_id)).reduce((s, o) => s + inCur(o, cur), 0);
-  const netTotal = itemRows.reduce((s, x) => s + x.net, 0), margin = netTotal - spent;
-  return { items: itemRows, otherCost, netTotal, margin, base, add, cur, received, spent, invoiced, contract, debt: Math.max(contract - received, 0), unpaidInv: Math.max(invoiced - received, 0), profit: received - spent, ops, docs };
+  const outs = ops.filter(o => o.type === "out");
+  const itemRows = items.map(x => Object.assign({}, x, { net: itemNet(x), gross: itemGross(x), goods: 0, other: 0 }));
+  const byId = Object.fromEntries(itemRows.map(x => [x.id, x])), netTotal = itemRows.reduce((s, x) => s + x.net, 0);
+  let otherCost = 0, otherShared = 0;
+  for (const o of outs) {
+    const a = inCur(o, cur), row = o.item_id && byId[o.item_id], kind = costKind(o, byId);
+    if (kind === "goods" && row) { row.goods += a; continue; }
+    otherCost += a;
+    if (row) row.other += a;
+    else if (itemRows.length) {
+      otherShared += a; let left = a;
+      itemRows.forEach((x, i) => { const part = i === itemRows.length - 1 ? left : Math.round(netTotal ? a * x.net / netTotal : a / itemRows.length); x.other += part; left -= part; });
+    }
+  }
+  itemRows.forEach(x => { x.cost = x.goods + x.other; x.margin = x.net - x.cost; });
+  const margin = netTotal - spent;
+  return { items: itemRows, otherCost, otherShared, netTotal, margin, base, add, cur, received, spent, invoiced, contract, debt: Math.max(contract - received, 0), unpaidInv: Math.max(invoiced - received, 0), profit: received - spent, ops, docs };
 }
 
 /* ================= data ================= */
@@ -250,8 +265,10 @@ function opsTable(list, compact) {
   return `<div class="tbl-wrap"><table><thead><tr><th>Дата</th><th>Операция</th>${compact ? "" : '<th class="hide-m">Счёт</th><th class="hide-m">Кто взял</th>'}<th class="r">Сумма</th></tr></thead><tbody>${list.map(o => {
     const sign = o.type === "in" ? "+" : o.type === "out" ? "−" : "";
     const title = o.type === "transfer" ? `${esc(o.account)} → ${esc(o.to_account)}` : esc(o.category || "Без категории");
-    const itn = o.item_id && o.project_id ? ((itemsAt(S.projects.find(p => p.id === o.project_id) || {}).find(x => x.id === o.item_id) || {}).name || "") : "";
-    const sub = [o.counterparty, o.type !== "transfer" && compact ? o.account : "", prj(o.project_id), itn ? "товар: " + itn : "", o.who && compact ? "взял: " + o.who : "", o.note].filter(Boolean).map(esc).join(" · ");
+    const pj = o.project_id && o.type === "out" && S.projects.find(p => p.id === o.project_id), its = pj ? itemsAt(pj) : [];
+    const itn = its.length ? ((its.find(x => x.id === o.item_id) || {}).name || "") : "";
+    const ckl = its.length ? (costKind(o, Object.fromEntries(its.map(x => [x.id, x]))) === "goods" && itn ? "товар: " + itn : "прочее: " + (itn || "на все товары")) : "";
+    const sub = [o.counterparty, o.type !== "transfer" && compact ? o.account : "", prj(o.project_id), ckl, o.who && compact ? "взял: " + o.who : "", o.note].filter(Boolean).map(esc).join(" · ");
     return `<tr class="click oprow" data-op="${esc(o.id)}"><td class="num" style="font-size:13px">${fmtDate(o.op_date)}</td><td><div>${title}${o.chain ? ` <a href="#chain-${encodeURIComponent(o.chain)}" class="pill st-work" style="text-decoration:none" title="Цепочка денег">${esc(o.chain)}</a>` : ""}</div>${sub ? `<div class="meta">${sub}</div>` : ""}</td>${compact ? "" : `<td class="hide-m">${esc(o.account)}</td><td class="hide-m">${esc(o.who || "")}</td>`}<td class="r num ${o.type === "in" ? "pos" : o.type === "out" ? "neg" : ""}">${sign}${money(o.amount, o.currency)}</td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
@@ -278,19 +295,24 @@ function itemsPanel(p, m) {
   const c = m.cur, pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "—";
   const chg = (x, f, fmt) => x.was && +x.was[f] !== +x[f] ? `<div class="muted" style="font-size:11px">было ${fmt(x.was[f])} · ${esc(x.by)}</div>` : "";
   if (!m.items.length) return `<section class="panel"><div class="panel-h"><h2>Товары по договору</h2>${canWrite() ? `<button class="btn small" data-act="edit-project" data-id="${esc(p.id)}">+ Добавить товары</button>` : ""}</div><div class="empty" style="padding:16px">Внесите товары из договора: наименование, кол-во и цену. Тогда сумма договора посчитается сама, а по каждому товару будет видна себестоимость и маржа.</div></section>`;
+  const neg0 = v => `<td class="r num ${v ? "neg" : "muted"}">${money(v, c)}</td>`;
+  const sub = x => costOpen ? `${neg0(x.goods)}${neg0(x.other)}` : "";
   const rows = m.items.map(x => `<tr><td><b>${esc(x.name)}</b>${x.added ? ` <span class="pill st-work">${esc(x.added)}</span>` : ""}</td>
     <td class="r num">${nf.format(+x.qty || 0)} ${esc(x.unit || "")}${chg(x, "qty", v => nf.format(+v || 0))}</td>
     <td class="r num hide-m">${money(+x.price || 0, c)}${chg(x, "price", v => money(+v || 0, c))}</td>
     <td class="r num">${money(x.gross, c)}</td>
-    <td class="r num ${x.cost ? "neg" : "muted"}">${money(x.cost, c)}</td>
+    ${sub(x)}<td class="r num ${x.cost ? "neg" : "muted"}" style="${costOpen ? "font-weight:600" : ""}">${money(x.cost, c)}</td>
     <td class="r num ${x.margin < 0 ? "neg" : "pos"}">${money(x.margin, c)}</td>
     <td class="r num hide-m muted">${pct(x.margin, x.net)}</td></tr>`).join("");
-  const tc = m.items.reduce((s, x) => s + x.cost, 0) + m.otherCost;
+  const tg = m.items.reduce((s2, x) => s2 + x.goods, 0), to = m.items.reduce((s2, x) => s2 + x.other, 0), tc = tg + to;
+  const btn = `<button class="btn small costtg" data-act="toggle-cost" aria-expanded="${costOpen}" title="${costOpen ? "Свернуть" : "Показать: товар и прочее"}">${costOpen ? "−" : "+"}</button>`;
   return `<section class="panel"><div class="panel-h"><h2>Товары, себестоимость и маржа</h2>${canWrite() ? `<div class="row" style="gap:6px"><button class="btn small" data-act="edit-project" data-id="${esc(p.id)}">Товары</button><button class="btn small" data-act="new-add">+ Доп. соглашение</button></div>` : ""}</div>
-  <div class="tbl-wrap"><table class="items"><thead><tr><th>Товар</th><th class="r">Кол-во</th><th class="r hide-m">Цена без НДС</th><th class="r">Сумма договора</th><th class="r">Себестоимость</th><th class="r">Маржа</th><th class="r hide-m">%</th></tr></thead>
-  <tbody>${rows}<tr><td><span class="muted">Прочие расходы: такси, доставка и др.</span></td><td></td><td class="hide-m"></td><td></td><td class="r num ${m.otherCost ? "neg" : "muted"}">${money(m.otherCost, c)}</td><td class="r num ${m.otherCost ? "neg" : "muted"}">${m.otherCost ? "−" : ""}${money(m.otherCost, c)}</td><td class="hide-m"></td></tr></tbody>
-  <tfoot><tr><td>Итого</td><td></td><td class="hide-m"></td><td class="r num">${money(m.contract, c)}</td><td class="r num neg">${money(tc, c)}</td><td class="r num ${m.margin < 0 ? "neg" : "pos"}">${money(m.margin, c)}</td><td class="r num hide-m">${pct(m.margin, m.netTotal)}</td></tr></tfoot></table></div>
-  <div class="panel-b muted" style="font-size:12px;border-top:1px solid var(--line)">Сумма договора — с НДС. Маржа = сумма без НДС (${money(m.netTotal, c)}) минус себестоимость, НДС уходит в налог. Себестоимость — расходы проекта, где выбран этот товар; расходы без товара идут в «Прочие».</div></section>`;
+  <div class="tbl-wrap"><table class="items"><thead><tr><th>Товар</th><th class="r">Кол-во</th><th class="r hide-m">Цена без НДС</th><th class="r">Сумма договора</th>
+    ${costOpen ? `<th class="r">Себес: товар</th><th class="r">Прочее<div style="font-weight:400;text-transform:none;letter-spacing:0">такси, доставка</div></th>` : ""}
+    <th class="r"><span class="row" style="gap:6px;justify-content:flex-end;flex-wrap:nowrap">${costOpen ? "Себес итого" : "Себестоимость"} ${btn}</span></th><th class="r">Маржа</th><th class="r hide-m">%</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr><td>Итого</td><td></td><td class="hide-m"></td><td class="r num">${money(m.contract, c)}</td>${costOpen ? `<td class="r num neg">${money(tg, c)}</td><td class="r num neg">${money(to, c)}</td>` : ""}<td class="r num neg">${money(tc, c)}</td><td class="r num ${m.margin < 0 ? "neg" : "pos"}">${money(m.margin, c)}</td><td class="r num hide-m">${pct(m.margin, m.netTotal)}</td></tr></tfoot></table></div>
+  <div class="panel-b muted" style="font-size:12px;border-top:1px solid var(--line)">Сумма договора — с НДС. Маржа = сумма без НДС (${money(m.netTotal, c)}) минус себестоимость. Себестоимость = сам товар + прочее (такси, доставка и т.п.). Прочее «на все товары» делится по доле товара в сумме${m.otherShared ? `: сейчас так разделено ${money(m.otherShared, c)}` : ""}.</div></section>`;
 }
 function vProject(id) {
   const p = S.projects.find(x => x.id === id);
@@ -483,7 +505,8 @@ function sheet(html) { $("#modal").innerHTML = `<div class="scrim" data-act="scr
 
 function opModal(op, preset = {}) {
   const s = st(), o = op ? Object.assign({}, op) : { type: preset.type || "out", op_date: today(), account: (S.accounts[0] || {}).name, project_id: preset.project || "", who: s.people[0] || "" };
-  let type = o.type;
+  if (!op && preset.project && (o.type === "out") && !o.category && s.out_cats.includes("Оплата поставщику")) o.category = "Оплата поставщику";
+  let type = o.type, ck = o.cost_type || (o.id && !o.item_id ? "other" : "goods");
   const lastRate = (S.ops.filter(x => x.currency === "USD" && x.rate).sort(sortOps)[0] || {}).rate || s.usd_rate || "";
   const mayEdit = !op || isFull() || op.created_by === S.me.id || S.me.role === "accountant";
   const mayDel = op && (isFull() || op.created_by === S.me.id);
@@ -503,17 +526,19 @@ function opModal(op, preset = {}) {
       <label class="f" id="rate-box"${accCur(acc) === "USD" ? "" : " hidden"}>Курс, сум за 1 $<input id="o-rate" inputmode="decimal" value="${esc(o.rate ? nf.format(o.rate) : lastRate ? nf.format(lastRate) : "")}"></label>
       ${type === "transfer" ? `<label class="f">Дошло на счёт (если меньше из-за комиссии)<input id="o-amountTo" inputmode="decimal" value="${o.amount_to != null ? esc(nf.format(o.amount_to)) : ""}" placeholder="необязательно"></label>` : ""}
       ${type !== "transfer" ? `<label class="f">Проект<select id="o-proj"><option value="">Без проекта</option>${S.projects.map(p => `<option value="${esc(p.id)}"${p.id === o.project_id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : ""}
-      ${type === "out" && o.project_id && itemsAt(S.projects.find(x => x.id === o.project_id)).length ? `<label class="f">Товар проекта (для себестоимости)<select id="o-item"><option value="">Прочие: такси, доставка и др.</option>${itemsAt(S.projects.find(x => x.id === o.project_id)).map(x => `<option value="${esc(x.id)}"${x.id === o.item_id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>` : ""}
+      ${type === "out" && o.project_id && itemsAt(S.projects.find(x => x.id === o.project_id)).length ? (() => { const its = itemsAt(S.projects.find(x => x.id === o.project_id)); return `<div class="f full"><span>Расход по проекту — на что</span><div class="seg ck" role="group" aria-label="Вид расхода"><button type="button" data-ck="goods" aria-pressed="${ck === "goods"}">Товар из договора</button><button type="button" data-ck="other" aria-pressed="${ck === "other"}">Прочее: такси, доставка…</button></div></div>
+      <label class="f full">${ck === "goods" ? "Какой товар" : "На какой товар отнести"}<select id="o-item">${ck === "other" ? `<option value="">На все товары (разделить по доле в сумме)</option>` : ""}${its.map(x => `<option value="${esc(x.id)}"${x.id === o.item_id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`; })() : ""}
       ${type === "out" ? `<label class="f">Кто взял<input id="o-who" list="who-list" value="${esc(o.who || "")}"><datalist id="who-list">${s.people.map(p => `<option value="${esc(p)}">`).join("")}</datalist></label>` : ""}
       ${type !== "transfer" ? `<label class="f ${type === "in" ? "" : "full"}">${type === "in" ? "От кого" : "Кому / где"}<input id="o-cp" value="${esc(o.counterparty || "")}" placeholder="${type === "in" ? "заказчик, человек" : "магазин, человек, налоговая"}"></label>` : ""}
       <label class="f">Цепочка<input id="o-chain" value="${esc(o.chain || "")}" placeholder="например, Ц5" list="chain-list"><datalist id="chain-list">${[...new Set(S.ops.map(x => x.chain).filter(Boolean))].map(c => `<option value="${esc(c)}">`).join("")}</datalist></label>
-      <label class="f full">Комментарий<input id="o-note" value="${esc(o.note || "")}" placeholder="на что потрачено, номер счёта и т.п."></label>
+      <label class="f full">Комментарий<input id="o-note" value="${esc(o.note || "")}" placeholder="${type === "out" && ck === "other" && o.project_id ? "на что: такси, доставка, упаковка…" : "на что потрачено, номер счёта и т.п."}"></label>
       <label class="f full">Чек или документ (PDF, фото)<input type="file" id="o-file" accept="application/pdf,image/*">${o.doc_path ? `<span>Прикреплён: <a href="#" data-act="open-file" data-path="${esc(o.doc_path)}">открыть</a></span>` : ""}</label>
       <div class="full err" id="o-err"></div>
       <div class="full row between"><div>${mayDel ? '<button type="button" class="btn danger" id="o-del">Удалить</button>' : ""}</div><div class="row"><button type="button" class="btn" data-act="close">Отмена</button>${mayEdit ? '<button class="btn primary" id="o-save">Сохранить</button>' : ""}</div></div>
     </form>
     ${op ? `<div class="muted" style="font-size:12px">Добавил(а): ${esc(pname(op.created_by) || "—")}${op.created_at ? ", " + new Date(op.created_at).toLocaleString("ru-RU") : ""}</div>` : ""}`);
-    document.querySelectorAll(".seg button").forEach(b => b.onclick = () => { collect(); type = b.dataset.t; draw(); });
+    document.querySelectorAll(".seg button[data-t]").forEach(b => b.onclick = () => { collect(); type = b.dataset.t; draw(); });
+    document.querySelectorAll(".seg button[data-ck]").forEach(b => b.onclick = () => { collect(); if (ck !== b.dataset.ck) { ck = b.dataset.ck; o.item_id = ck === "other" ? "" : o.item_id; } draw(); });
     const pj = $("#o-proj"); if (pj) pj.onchange = () => { collect(); o.item_id = ""; draw(); };
     $("#o-acc").onchange = e => { o.account = e.target.value; $("#rate-box").hidden = accCur(e.target.value) !== "USD"; };
     $("#op-form").onsubmit = save;
@@ -529,11 +554,11 @@ function opModal(op, preset = {}) {
     e.preventDefault(); const err = $("#o-err"); err.textContent = "";
     const amount = parseNum($("#o-amount").value); if (!(amount > 0)) { err.textContent = "Укажите сумму больше нуля."; return; }
     const account = $("#o-acc").value, cur = accCur(account);
-    const rec = { type, op_date: $("#o-date").value || today(), amount, account, currency: cur, note: $("#o-note").value.trim() || null, chain: $("#o-chain").value.trim() || null, rate: null, to_account: null, amount_to: null, category: null, project_id: null, counterparty: null, who: null, item_id: null };
+    const rec = { type, op_date: $("#o-date").value || today(), amount, account, currency: cur, note: $("#o-note").value.trim() || null, chain: $("#o-chain").value.trim() || null, rate: null, to_account: null, amount_to: null, category: null, project_id: null, counterparty: null, who: null, item_id: null, cost_type: null };
     if (cur === "USD") { const r = parseNum($("#o-rate").value); if (!(r > 0)) { err.textContent = "Для долларового счёта укажите курс."; return; } rec.rate = r; }
     if (type === "transfer") { rec.to_account = $("#o-to").value; if (rec.to_account === account) { err.textContent = "Выберите разные счета."; return; } const at = parseNum($("#o-amountTo").value); if (at > 0) rec.amount_to = at; rec.category = "Перевод между счетами"; }
     else { rec.category = $("#o-cat").value; rec.project_id = $("#o-proj").value || null; rec.counterparty = $("#o-cp").value.trim() || null; }
-    if (type === "out") { rec.who = $("#o-who").value.trim() || null; const it = $("#o-item"); if (it && rec.project_id) rec.item_id = it.value || null; }
+    if (type === "out") { rec.who = $("#o-who").value.trim() || null; const it = $("#o-item"); if (it && rec.project_id) { rec.item_id = it.value || null; rec.cost_type = ck; if (ck === "other" && !rec.note) { err.textContent = "Напишите, на что прочий расход (такси, доставка…)."; return; } } }
     const btn = $("#o-save"); btn.disabled = true; btn.textContent = "Сохраняю…";
     try {
       const fe = $("#o-file");
@@ -714,6 +739,7 @@ document.addEventListener("click", async e => {
     if (d.file_path) S.sb.storage.from("docs").remove([d.file_path]).catch(() => {});
     toast("Документ удалён"); afterWrite("documents");
   }
+  else if (a === "toggle-cost") { costOpen = !costOpen; try { localStorage.setItem("cf-cost-open", costOpen ? "1" : "0"); } catch (x) {} render(); }
   else if (a === "new-add" && p) addModal(p);
   else if (a === "edit-add" && p) addModal(p, +t.dataset.i);
   else if (a === "del-add" && p) { if (!t.dataset.c) { t.dataset.c = 1; t.textContent = "Удалить?"; return; } const l = [...addenda(p)]; l.splice(+t.dataset.i, 1); saveAddenda(p, l); }

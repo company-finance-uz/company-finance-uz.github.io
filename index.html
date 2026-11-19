@@ -124,6 +124,9 @@ select.docst.st-work{background:var(--accent-soft);color:var(--accent);border-co
 @media (max-width:560px){.itgrid{grid-template-columns:1fr 1fr 1fr}.itgrid>.eyebrow{display:none}.itgrid input[data-f=name]{grid-column:1/-1;margin-top:6px}.adgrid{grid-template-columns:1fr 1fr}.adgrid input[data-f=name]{grid-column:1/-1;margin-top:6px}.adgrid>span:not(.eyebrow){display:none}.adgrid>.eyebrow{display:none}}
 table.items tfoot td{font-weight:700;border-top:2px solid var(--line);padding-top:10px}
 .costtg{padding:0 7px;min-width:24px;line-height:20px;font-weight:700}
+.splitgrid{display:grid;grid-template-columns:minmax(120px,1.5fr) minmax(90px,1fr) minmax(90px,1.2fr) 34px;gap:6px;align-items:center}
+.splitgrid select,.splitgrid input{padding:7px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font-size:14px;width:100%;min-width:0}
+@media (max-width:560px){.splitgrid{grid-template-columns:1fr 1fr 34px}.splitgrid input[data-sf=note]{display:none}}
 .docs{display:flex;flex-direction:column}
 .doc{display:flex;gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
 .doc:last-child{border-bottom:0}
@@ -200,6 +203,6 @@ label.f textarea{min-height:64px;resize:vertical}
 <div id="modal"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="config.js?v=20261119"></script>
-<script src="app.js?v=20261119d"></script>
+<script src="app.js?v=20261119e"></script>
 </body>
 </html>

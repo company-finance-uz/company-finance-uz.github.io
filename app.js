@@ -54,6 +54,8 @@ const OWN_CAT = "Со своей карты"; // перевод себе с ка
 const opById = id => S.allOps.find(x => x.id === id);
 const isRefund = o => o.type === "in" && !!o.advance_id && (opById(o.advance_id) || {}).type === "out"; // вернули за расход (обед за всех и т.п.)
 const isOwnIn = o => o.type === "in" && o.category === OWN_CAT;
+// Дал в долг / мне вернули / взял в долг / вернул — не доход и не расход (кроме долга, которым человек гасит мой кредит)
+const isDebtMove = o => { if (!o.debt_id) return false; const d = (S.debts || []).find(x => x.id === o.debt_id); return !!d && (d.kind === "lend" || d.kind === "borrow") && !dmeta(d).alloc; };
 const refundsOf = id => S.allOps.filter(x => x.type === "in" && x.advance_id === id);
 const refundSum = o => o.type === "out" ? refundsOf(o.id).reduce((s2, x) => s2 + uzs(x), 0) : 0;
 const expLabel = e => (e.counterparty || e.category || "расход") + " " + fmtDate(e.op_date);
@@ -368,7 +370,7 @@ function vOverview() {
   const s = st(), b = balances(), ym = today().slice(0, 7);
   const mOps = S.ops.filter(o => (o.op_date || "").startsWith(ym));
   const real = o => !(o._virt === "draw" || o._virt === "back");
-  const mi = mOps.filter(o => o.type === "in" && real(o) && !isOwnIn(o) && !isRefund(o)).reduce((x, o) => x + uzs(o), 0), mo = mOps.filter(o => o.type === "out" && real(o)).reduce((x, o) => x + uzs(o), 0) - mOps.filter(isRefund).reduce((x, o) => x + uzs(o), 0);
+  const mi = mOps.filter(o => o.type === "in" && real(o) && !isOwnIn(o) && !isRefund(o) && !isDebtMove(o)).reduce((x, o) => x + uzs(o), 0), mo = mOps.filter(o => o.type === "out" && real(o) && !isDebtMove(o)).reduce((x, o) => x + uzs(o), 0) - mOps.filter(isRefund).reduce((x, o) => x + uzs(o), 0);
   const mDraw = mOps.filter(o => o._virt === "draw").reduce((x, o) => x + uzs(o), 0) - mOps.filter(o => o._virt === "back").reduce((x, o) => x + uzs(o), 0);
   const mFromCo = mOps.filter(o => o._virt === "fromco").reduce((x, o) => x + uzs(o), 0), my = isMy();
   const act = S.projects.filter(p => p.status !== "closed");
@@ -380,7 +382,7 @@ function vOverview() {
   <div class="grid kpis">
     <div class="kpi"><span class="eyebrow">Деньги на счетах</span><span class="v num">${money(total)}</span><span class="s">сум${s.usd_rate ? "" : " · доллары без курса не учтены"}</span></div>
     <div class="kpi"><span class="eyebrow">Пришло за месяц</span><span class="v num pos">${money(mi)}</span><span class="s">${my ? "из них от компании " + money(mFromCo) : mOps.filter(o => o.type === "in" && real(o)).length + " поступлений"}</span></div>
-    <div class="kpi"><span class="eyebrow">Ушло за месяц</span><span class="v num neg">${money(mo)}</span><span class="s">${mOps.filter(o => o.type === "out" && real(o)).length} расходов</span></div>
+    <div class="kpi"><span class="eyebrow">Ушло за месяц</span><span class="v num neg">${money(mo)}</span><span class="s">${mOps.filter(o => o.type === "out" && real(o) && !isDebtMove(o)).length} расходов</span></div>
     ${my ? (() => { const mine = S.debts.filter(d => !d.closed && d.owner_id === S.me.id), inf = mine.map(d => [d, debtInfo(d)]);
       const ow = inf.filter(([d]) => iOwe(d)).reduce((s2, [, i]) => s2 + (i.leftUzs != null ? i.leftUzs : i.left), 0), late = inf.filter(([d]) => iOwe(d)).reduce((s2, [, i]) => s2 + i.overdue.reduce((a, r) => a + (+r.a || 0), 0), 0);
       return `<a class="kpi" href="#my-debts" style="text-decoration:none;color:inherit"><span class="eyebrow">Я должен</span><span class="v num ${ow ? "neg" : ""}">${money(ow)}</span><span class="s">${late ? `<span class="neg">просрочено ${money(late)}</span>` : "кредиты и долги, без просрочек"}</span></a>`; })() : ""}
@@ -601,12 +603,12 @@ function vOps() {
 function vCash() {
   const ms = months().slice().reverse();
   const my = isMy(), real = x => !(x._virt === "draw" || x._virt === "back");
-  const rows = ms.map(m => { const o = S.ops.filter(x => (x.op_date || "").startsWith(m) && real(x)); return { m, i: o.filter(x => x.type === "in" && !isOwnIn(x) && !isRefund(x)).reduce((s, x) => s + uzs(x), 0), e: o.filter(x => x.type === "out").reduce((s, x) => s + uzs(x), 0) - o.filter(isRefund).reduce((s, x) => s + uzs(x), 0) }; });
+  const rows = ms.map(m => { const o = S.ops.filter(x => (x.op_date || "").startsWith(m) && real(x)); return { m, i: o.filter(x => x.type === "in" && !isOwnIn(x) && !isRefund(x) && !isDebtMove(x)).reduce((s, x) => s + uzs(x), 0), e: o.filter(x => x.type === "out" && !isDebtMove(x)).reduce((s, x) => s + uzs(x), 0) - o.filter(isRefund).reduce((s, x) => s + uzs(x), 0) }; });
   let cum = 0; rows.forEach(r => { cum += r.i - r.e; r.c = cum; });
   const mx = Math.max(1, ...rows.map(r => Math.max(r.i, r.e)));
   const per = S.cfMonth, pops = S.ops.filter(o => !per || (o.op_date || "").startsWith(per));
   const group = (arr, key) => { const g = {}; arr.forEach(o => { const k = key(o) || "—"; g[k] = (g[k] || 0) + uzs(o) - refundSum(o); }); return Object.entries(g).sort((a, b) => b[1] - a[1]); };
-  const outs = pops.filter(o => o.type === "out" && real(o)), ins = pops.filter(o => o.type === "in" && real(o) && !isOwnIn(o) && !isRefund(o));
+  const outs = pops.filter(o => o.type === "out" && real(o) && !isDebtMove(o)), ins = pops.filter(o => o.type === "in" && real(o) && !isOwnIn(o) && !isRefund(o) && !isDebtMove(o));
   // Расчёты с людьми: выдано с компании − вернули − потратили на проекты со своих карт = осталось у человека
   const ppl = {};
   if (!my) pops.forEach(o => { const k = o._virt === "draw" || o._virt === "back" ? accOwner(o._virt === "draw" ? S.allOps.find(x => x.id === o._orig).to_account : S.allOps.find(x => x.id === o._orig).account) || "—" : o._personal || null; if (!k) return;

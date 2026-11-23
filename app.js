@@ -365,7 +365,7 @@ function render() {
 }
 
 /* ================= views ================= */
-const sortOps = (a, b) => (b.op_date || "").localeCompare(a.op_date || "") || (b.created_at || "").localeCompare(a.created_at || "");
+const sortOps = (a, b) => (b.op_date || "").localeCompare(a.op_date || "") || (b.op_time || "").localeCompare(a.op_time || "") || (b.created_at || "").localeCompare(a.created_at || "");
 const months = () => [...new Set(S.ops.map(o => (o.op_date || "").slice(0, 7)).filter(Boolean))].sort().reverse();
 
 function vOverview() {
@@ -423,7 +423,7 @@ function opsTable(list, compact) {
     const sub = [o.counterparty, o.type !== "transfer" && compact ? o.account : "", o._personal ? "с личной карты: " + o._personal : "", prj(o.project_id), ckl,
       rfFor ? "возврат за: " + expLabel(rfFor) : "", rfs ? "вернули " + money(rfs) + " · моё " + money(uzs(o) - rfs) : "", isOwnIn(o) ? "не доход" : "",
       ai && ai.spent ? "использовано " + money(ai.spent, ai.cur) + " · осталось " + money(ai.left, ai.cur) : "", src ? (isAdvance(src.op) ? "из выданных " : "из полученного ") + fmtDate(src.op.op_date) + (src.who && !isAdvance(src.op) ? " (" + src.who + ")" : "") : "", dbt ? (o.debt_role === "start" ? "долг: " : "по долгу: ") + dbt.party : "", o.who && compact ? "взял: " + o.who : "", o.note].filter(Boolean).map(esc).join(" · ");
-    return `<tr class="click oprow ${o._virt ? "virt" : ""}" data-op="${esc(o.id)}"><td class="num" style="font-size:13px">${fmtDate(o.op_date)}</td><td><div>${title}${o.chain ? ` <a href="#chain-${encodeURIComponent(o.chain)}" class="pill st-work" style="text-decoration:none" title="Цепочка денег">${esc(o.chain)}</a>` : ""}</div>${sub ? `<div class="meta">${sub}</div>` : ""}</td>${compact ? "" : `<td class="hide-m">${esc(o.account)}</td><td class="hide-m">${esc(o.who || "")}</td>`}<td class="r num ${o.type === "in" ? "pos" : o.type === "out" ? "neg" : ""}">${sign}${money(o.amount, o.currency)}</td></tr>`;
+    return `<tr class="click oprow ${o._virt ? "virt" : ""}" data-op="${esc(o.id)}"><td class="num" style="font-size:13px">${fmtDate(o.op_date)}${o.op_time ? `<div class="k" style="font-size:12px">${esc(o.op_time.slice(0, 5))}</div>` : ""}</td><td><div>${title}${o.chain ? ` <a href="#chain-${encodeURIComponent(o.chain)}" class="pill st-work" style="text-decoration:none" title="Цепочка денег">${esc(o.chain)}</a>` : ""}</div>${sub ? `<div class="meta">${sub}</div>` : ""}</td>${compact ? "" : `<td class="hide-m">${esc(o.account)}</td><td class="hide-m">${esc(o.who || "")}</td>`}<td class="r num ${o.type === "in" ? "pos" : o.type === "out" ? "neg" : ""}">${sign}${money(o.amount, o.currency)}</td></tr>`;
   }).join("")}</tbody></table></div>`;
 }
 
@@ -817,7 +817,7 @@ function opModal(op, preset = {}) {
   const mayEdit = !op || isFull() || op.created_by === S.me.id || S.me.role === "accountant";
   const mayDel = op && (isFull() || op.created_by === S.me.id);
   const collect = () => { const g = id => { const e = $("#" + id); return e ? e.value : undefined; };
-    const d = g("o-date"); if (d !== undefined) o.op_date = d; const a = g("o-amount"); if (a !== undefined) o.amount = parseNum(a) || undefined; const n = g("o-note"); if (n !== undefined) o.note = n;
+    const d = g("o-date"); if (d !== undefined) o.op_date = d; const tm = g("o-time"); if (tm !== undefined) o.op_time = tm || null; const a = g("o-amount"); if (a !== undefined) o.amount = parseNum(a) || undefined; const n = g("o-note"); if (n !== undefined) o.note = n;
     const dl = g("o-debt"); if (dl !== undefined) { const [di, dr] = dl.split("|"); o.debt_id = di || ""; o.debt_role = dr || ""; } const du = g("o-due"); if (du !== undefined) o._due = du; const av = g("o-adv"); if (av !== undefined) o.advance_id = av; const rf = g("o-rf"); if (rf !== undefined) o.advance_id = rf;
     const ac = g("o-acc"); if (ac) o.account = ac; const c = g("o-cat"); if (c) o.category = c; const p = g("o-proj"); if (p !== undefined) o.project_id = p; const it = g("o-item"); if (it !== undefined) o.item_id = it; const w = g("o-who"); if (w !== undefined) o.who = w; const cp = g("o-cp"); if (cp !== undefined) o.counterparty = cp; const t = g("o-to"); if (t) o.to_account = t; };
   const draw = () => {
@@ -833,6 +833,7 @@ function opModal(op, preset = {}) {
     <div class="seg" role="group" aria-label="Тип операции"><button type="button" class="t-out" aria-pressed="${type === "out"}" data-t="out">Расход</button><button type="button" class="t-in" aria-pressed="${type === "in"}" data-t="in">Приход</button><button type="button" class="t-tr" aria-pressed="${type === "transfer"}" data-t="transfer">${my ? "Перевод" : "Между счетами"}</button></div>
     <form id="op-form" class="form">
       <label class="f">Дата<input type="date" id="o-date" value="${esc(o.op_date)}" required></label>
+      <label class="f">Время (необязательно)<input type="time" id="o-time" value="${esc((o.op_time || "").slice(0, 5))}"></label>
       <label class="f">Сумма<input id="o-amount" inputmode="decimal" value="${o.amount != null ? esc(nf.format(o.amount)) : ""}" placeholder="0" required></label>
       ${type === "transfer" ? `<div class="full muted" style="font-size:12px">${isMy() ? "Можно перевести в компанию или на свою другую карту." : "Перевод на личную карту человека в компании будет «Выдано», а в его кабинете — «От компании»."}</div>` : ""}
       <label class="f">${type === "transfer" ? "Со счёта" : "Счёт"}<select id="o-acc">${fromList.map(n => `<option value="${esc(n)}"${n === acc ? " selected" : ""}>${esc(accLabel(n))}</option>`).join("")}</select></label>
@@ -889,7 +890,7 @@ function opModal(op, preset = {}) {
     e.preventDefault(); const err = $("#o-err"); err.textContent = "";
     const amount = parseNum($("#o-amount").value); if (!(amount > 0)) { err.textContent = "Укажите сумму больше нуля."; return; }
     const account = $("#o-acc").value, cur = accCur(account);
-    const rec = { type, op_date: $("#o-date").value || today(), amount, account, currency: cur, note: $("#o-note").value.trim() || null, chain: $("#o-chain").value.trim() || null, rate: null, to_account: null, amount_to: null, category: null, project_id: null, counterparty: null, who: null, item_id: null, cost_type: null, debt_id: null, debt_role: null, advance_id: null, splits: null };
+    const rec = { type, op_date: $("#o-date").value || today(), op_time: ($("#o-time") || {}).value || null, amount, account, currency: cur, note: $("#o-note").value.trim() || null, chain: $("#o-chain").value.trim() || null, rate: null, to_account: null, amount_to: null, category: null, project_id: null, counterparty: null, who: null, item_id: null, cost_type: null, debt_id: null, debt_role: null, advance_id: null, splits: null };
     if (cur === "USD") { const r = parseNum($("#o-rate").value); if (!(r > 0)) { err.textContent = "Для долларового счёта укажите курс."; return; } rec.rate = r; }
     if (type === "transfer") { const avt = $("#o-adv"); rec.advance_id = avt ? (avt.value || null) : null; rec.to_account = $("#o-to").value; if (rec.to_account === account) { err.textContent = "Выберите разные счета."; return; } const at = parseNum($("#o-amountTo").value); if (at > 0) rec.amount_to = at; rec.category = "Перевод между счетами"; }
     else { rec.category = $("#o-cat").value; rec.project_id = ($("#o-proj") || {}).value || null; rec.counterparty = $("#o-cp").value.trim() || null;

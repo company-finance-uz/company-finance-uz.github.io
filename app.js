@@ -4,7 +4,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const nf = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-const money = (v, cur) => nf.format(Math.round((+v || 0) * 100) / 100) + (cur === "USD" ? " $" : "");
+const money = (v, cur) => nf.format(Math.round((+v || 0) * 100) / 100 || 0) + (cur === "USD" ? " $" : "");
 const parseNum = s => { if (typeof s === "number") return s; s = String(s || "").replace(/[\s ]/g, "").replace(",", "."); const v = parseFloat(s); return isFinite(v) ? v : NaN; };
 const today = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
 const fmtDate = d => d ? d.slice(8, 10) + "." + d.slice(5, 7) + "." + d.slice(0, 4) : "";
